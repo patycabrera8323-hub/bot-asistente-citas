@@ -8,6 +8,8 @@ const state = {
   apiKey: localStorage.getItem('gemini_api_key') || '',
   businessName: localStorage.getItem('business_name') || 'Mi Negocio',
   businessDesc: localStorage.getItem('business_desc') || '',
+  detectedModel: localStorage.getItem('detected_model') || 'gemini-1.5-flash-latest',
+  preferredVoice: localStorage.getItem('preferred_voice') || '',
   messages: [],
   isLoading: false,
   isListening: false,
@@ -31,16 +33,24 @@ const saveConfigBtn  = document.getElementById('saveConfigBtn');
 const apiKeyInput    = document.getElementById('apiKeyInput');
 const businessNameIn = document.getElementById('businessNameInput');
 const businessDescIn = document.getElementById('businessDescInput');
+const voiceSelect    = document.getElementById('voiceSelect');
 
 // ─── CONFIGURACIÓN INICIAL ───────────────────
 document.addEventListener('DOMContentLoaded', () => {
   // Inicializar interfaz
   setOrbState('idle');
 
+  // Cargar y escuchar voces del navegador
+  populateVoices();
+  if (window.speechSynthesis) {
+    window.speechSynthesis.onvoiceschanged = populateVoices;
+  }
+
   if (!state.apiKey) {
     configModal.style.display = 'flex';
   } else {
     initVoiceConversation();
+    autoDetectModel(); // Escanear y configurar el modelo adecuado en background
   }
 
   setupSpeechRecognition();
@@ -162,13 +172,16 @@ function setupEventListeners() {
     state.apiKey = key;
     state.businessName = businessNameIn.value.trim() || 'Mi Negocio';
     state.businessDesc = businessDescIn.value.trim();
+    state.preferredVoice = voiceSelect.value;
 
     localStorage.setItem('gemini_api_key', key);
     localStorage.setItem('business_name', state.businessName);
     localStorage.setItem('business_desc', state.businessDesc);
+    localStorage.setItem('preferred_voice', state.preferredVoice);
 
     configModal.style.display = 'none';
     initVoiceConversation();
+    autoDetectModel(); // Escanear y configurar el modelo adecuado de inmediato
   });
 }
 
@@ -305,14 +318,15 @@ async function processVoiceInput(text) {
 
   // Intentar con gemini-1.5-flash en el endpoint estable v1 (máxima compatibilidad)
   // y gemini-2.0-flash en v1beta como secundario
+  const primaryModel = state.detectedModel || 'gemini-1.5-flash';
   const attempts = [
     {
-      url: `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${state.apiKey}`,
-      model: 'gemini-1.5-flash (v1)'
+      url: `https://generativelanguage.googleapis.com/v1beta/models/${primaryModel}:generateContent?key=${state.apiKey}`,
+      model: `${primaryModel} (v1beta)`
     },
     {
-      url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${state.apiKey}`,
-      model: 'gemini-2.0-flash (v1beta)'
+      url: `https://generativelanguage.googleapis.com/v1/models/${primaryModel}:generateContent?key=${state.apiKey}`,
+      model: `${primaryModel} (v1)`
     }
   ];
   let success = false;
@@ -469,16 +483,17 @@ function speakText(text, callback) {
   const voices = window.speechSynthesis.getVoices();
   const esVoices = voices.filter(v => v.lang.startsWith('es'));
 
-  // Prioridad 1: Voces en español que sean Online / Naturales (de Chrome/Edge, suenan increíblemente reales)
-  // Prioridad 2: Voces de Google en español
-  // Prioridad 3: Voces locales femeninas populares (Yolanda, Dalia, Sabina, Helena, Sandra, etc.)
-  // Prioridad 4: Cualquier voz en español disponible
-  const premiumVoice = 
-    esVoices.find(v => !v.localService && v.name.toLowerCase().includes('natural')) ||
-    esVoices.find(v => !v.localService && (v.name.toLowerCase().includes('yolanda') || v.name.toLowerCase().includes('dalia') || v.name.toLowerCase().includes('elena'))) ||
-    esVoices.find(v => v.name.toLowerCase().includes('google')) ||
-    esVoices.find(v => v.name.toLowerCase().includes('female') || v.name.toLowerCase().includes('mujer') || v.name.toLowerCase().includes('sandra') || v.name.toLowerCase().includes('sabina') || v.name.toLowerCase().includes('helena')) ||
-    esVoices[0];
+  // Prioridad: Usar la seleccionada por el usuario, si no, buscar la mejor premium
+  let premiumVoice = esVoices.find(v => v.name === state.preferredVoice);
+
+  if (!premiumVoice) {
+    premiumVoice = 
+      esVoices.find(v => !v.localService && v.name.toLowerCase().includes('natural')) ||
+      esVoices.find(v => !v.localService && (v.name.toLowerCase().includes('yolanda') || v.name.toLowerCase().includes('dalia') || v.name.toLowerCase().includes('elena'))) ||
+      esVoices.find(v => v.name.toLowerCase().includes('google')) ||
+      esVoices.find(v => v.name.toLowerCase().includes('female') || v.name.toLowerCase().includes('mujer') || v.name.toLowerCase().includes('sandra') || v.name.toLowerCase().includes('sabina') || v.name.toLowerCase().includes('helena')) ||
+      esVoices[0];
+  }
 
   if (premiumVoice) {
     utter.voice = premiumVoice;
@@ -504,7 +519,99 @@ function speakText(text, callback) {
   window.speechSynthesis.speak(utter);
 }
 
-// Cargar voces en background para evitar lag inicial
-if (window.speechSynthesis) {
-  window.speechSynthesis.onvoiceschanged = () => {};
+// ─── UTILS DE VOZ Y MODELOS ────────────────────
+
+// Cargar y listar todas las voces del dispositivo en el selector
+function populateVoices() {
+  if (!window.speechSynthesis || !voiceSelect) return;
+
+  const voices = window.speechSynthesis.getVoices();
+  const esVoices = voices.filter(v => v.lang.startsWith('es'));
+
+  // Guardar la selección actual
+  const currentSelection = voiceSelect.value || state.preferredVoice;
+
+  // Limpiar el selector
+  voiceSelect.innerHTML = '';
+
+  if (esVoices.length === 0) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = 'Sin voces en español detectadas';
+    voiceSelect.appendChild(opt);
+    return;
+  }
+
+  // Ordenar voces premium online al inicio
+  esVoices.sort((a, b) => {
+    const aPremium = !a.localService ? 1 : 0;
+    const bPremium = !b.localService ? 1 : 0;
+    return bPremium - aPremium;
+  });
+
+  esVoices.forEach(voice => {
+    const option = document.createElement('option');
+    option.value = voice.name;
+    const typeLabel = voice.localService ? '[Básica Offline]' : '[Premium Natural Online]';
+    option.textContent = `${voice.name} (${voice.lang}) ${typeLabel}`;
+    
+    // Autoseleccionar la preferida anterior
+    if (voice.name === currentSelection) {
+      option.selected = true;
+    }
+    
+    voiceSelect.appendChild(option);
+  });
+
+  // Si no había selección previa, autoseleccionar la primera (que es premium)
+  if (!voiceSelect.value && esVoices.length > 0) {
+    voiceSelect.selectedIndex = 0;
+    state.preferredVoice = voiceSelect.value;
+  }
+}
+
+// Autodetectar dinámicamente los modelos activos del usuario para evitar errores
+async function autoDetectModel() {
+  if (!state.apiKey) return;
+
+  console.log("Iniciando escaneo de modelos Gemini autorizados...");
+  try {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${state.apiKey}`);
+    if (response.ok) {
+      const data = await response.json();
+      const models = data.models || [];
+      console.log("Lista de modelos en tu cuenta:", models);
+
+      // Buscar modelos que soporten generateContent
+      const generateModels = models.filter(m => m.supportedGenerationMethods.includes('generateContent'));
+
+      if (generateModels.length > 0) {
+        // 1. Intentar buscar un modelo de la familia 1.5 flash
+        // (Recomendado porque el usuario tiene gemini-2.0 bloqueado por cuota 0 en su región)
+        let matched = generateModels.find(m => m.name.includes('gemini-1.5-flash'));
+        
+        // 2. Si no, cualquier modelo flash
+        if (!matched) {
+          matched = generateModels.find(m => m.name.includes('flash'));
+        }
+        
+        // 3. Si no, cualquier modelo disponible
+        if (!matched) {
+          matched = generateModels[0];
+        }
+
+        const cleanName = matched.name.replace('models/', '');
+        state.detectedModel = cleanName;
+        localStorage.setItem('detected_model', cleanName);
+        console.log("🎯 ¡Modelo autodetectado y configurado exitosamente!: ", cleanName);
+        return;
+      }
+    }
+  } catch (err) {
+    console.warn("Fallo la autodetectación de modelos, usando fallback estable:", err.message);
+  }
+
+  // Fallback si falla
+  state.detectedModel = 'gemini-1.5-flash';
+  localStorage.setItem('detected_model', 'gemini-1.5-flash');
 }
