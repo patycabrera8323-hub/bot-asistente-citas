@@ -303,15 +303,26 @@ async function processVoiceInput(text) {
   
   state.messages.push({ role: 'user', parts: [{ text: text }] });
 
-  const models = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+  // Intentar con gemini-1.5-flash en el endpoint estable v1 (máxima compatibilidad)
+  // y gemini-2.0-flash en v1beta como secundario
+  const attempts = [
+    {
+      url: `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${state.apiKey}`,
+      model: 'gemini-1.5-flash (v1)'
+    },
+    {
+      url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${state.apiKey}`,
+      model: 'gemini-2.0-flash (v1beta)'
+    }
+  ];
   let success = false;
   let botText = '';
   let lastError = null;
 
-  for (const model of models) {
+  for (const attempt of attempts) {
     try {
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${state.apiKey}`,
+        attempt.url,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -328,7 +339,7 @@ async function processVoiceInput(text) {
 
       if (!response.ok) {
         const err = await response.json();
-        throw new Error(err.error?.message || `Error con ${model}`);
+        throw new Error(err.error?.message || `Error con ${attempt.model}`);
       }
 
       const data = await response.json();
@@ -336,7 +347,7 @@ async function processVoiceInput(text) {
       success = true;
       break;
     } catch (err) {
-      console.warn(`Fallo con el modelo ${model}:`, err.message);
+      console.warn(`Fallo con ${attempt.model}:`, err.message);
       lastError = err;
     }
   }
@@ -450,19 +461,28 @@ function speakText(text, callback) {
 
   const utter = new SpeechSynthesisUtterance(cleanText);
   utter.lang = 'es-MX';
-  utter.rate = 1.05;
-  utter.pitch = 1.05;
+  utter.rate = 0.98;  // Velocidad ligeramente más lenta para que suene menos robótico y más natural
+  utter.pitch = 1.02; // Tono ligeramente más cálido y femenino
   utter.volume = 1.0;
 
-  // Intentar seleccionar voz en español femenina
+  // Obtener todas las voces en el dispositivo
   const voices = window.speechSynthesis.getVoices();
-  const femaleVoice = voices.find(v => 
-    v.lang.startsWith('es') && 
-    (v.name.toLowerCase().includes('female') || v.name.toLowerCase().includes('luna') || v.name.toLowerCase().includes('sandra') || v.name.toLowerCase().includes('mexico'))
-  ) || voices.find(v => v.lang.startsWith('es'));
+  const esVoices = voices.filter(v => v.lang.startsWith('es'));
 
-  if (femaleVoice) {
-    utter.voice = femaleVoice;
+  // Prioridad 1: Voces en español que sean Online / Naturales (de Chrome/Edge, suenan increíblemente reales)
+  // Prioridad 2: Voces de Google en español
+  // Prioridad 3: Voces locales femeninas populares (Yolanda, Dalia, Sabina, Helena, Sandra, etc.)
+  // Prioridad 4: Cualquier voz en español disponible
+  const premiumVoice = 
+    esVoices.find(v => !v.localService && v.name.toLowerCase().includes('natural')) ||
+    esVoices.find(v => !v.localService && (v.name.toLowerCase().includes('yolanda') || v.name.toLowerCase().includes('dalia') || v.name.toLowerCase().includes('elena'))) ||
+    esVoices.find(v => v.name.toLowerCase().includes('google')) ||
+    esVoices.find(v => v.name.toLowerCase().includes('female') || v.name.toLowerCase().includes('mujer') || v.name.toLowerCase().includes('sandra') || v.name.toLowerCase().includes('sabina') || v.name.toLowerCase().includes('helena')) ||
+    esVoices[0];
+
+  if (premiumVoice) {
+    utter.voice = premiumVoice;
+    console.log("Voz premium seleccionada:", premiumVoice.name, premiumVoice.localService ? "[Local]" : "[Online/Natural]");
   }
 
   utter.onend = () => {
