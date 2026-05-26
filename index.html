@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Asistente de Voz IA | Luna</title>
+  <meta name="description" content="Llamada interactiva de voz con nuestro asistente IA." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- Fondo con degradados suaves -->
+  <div class="bg-orbs">
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+  </div>
+
+  <div class="voice-container">
+    <!-- Header -->
+    <header class="header">
+      <div class="logo">
+        <div class="logo-icon">✦</div>
+        <span class="logo-text">Luna Asistente</span>
+      </div>
+      <button class="settings-btn" id="configBtn" title="Configuración">⚙️</button>
+    </header>
+
+    <!-- Main Voice Hub -->
+    <main class="voice-hub">
+      <div class="assistant-profile">
+        <h1 class="assistant-name">Luna</h1>
+        <p class="assistant-status" id="callStatus">Listo para iniciar llamada</p>
+      </div>
+
+      <!-- Pulsating Voice Orb -->
+      <div class="orb-wrapper">
+        <div class="orb-glow"></div>
+        <button class="voice-orb" id="voiceOrb">
+          <div class="orb-inner">
+            <span class="orb-icon" id="orbIcon">📞</span>
+          </div>
+        </button>
+        <!-- Wave rings for active voice -->
+        <div class="pulse-ring ring-1"></div>
+        <div class="pulse-ring ring-2"></div>
+        <div class="pulse-ring ring-3"></div>
+      </div>
+
+      <div class="voice-prompt" id="promptText">
+        Toca la esfera para iniciar la llamada de voz
+      </div>
+
+      <!-- Realtime Transcription Subtitles -->
+      <div class="subtitles-container">
+        <p class="subtitle-text" id="subtitleText">"..."</p>
+      </div>
+    </main>
+
+    <!-- Action Buttons -->
+    <div class="call-controls">
+      <button class="control-btn end-call" id="endCallBtn" style="display:none;" title="Terminar llamada">
+        ✕ Colgar
+      </button>
+    </div>
+  </div>
+
+  <!-- Appointment Card (Slides Up) -->
+  <div class="appt-slideup" id="appointmentCard">
+    <div class="appt-handle"></div>
+    <div class="appt-content">
+      <div class="appt-header">
+        <span class="appt-badge">📅 CITA AGENDADA</span>
+        <h3>¡Tu cita ha sido reservada!</h3>
+      </div>
+      <div class="appt-details" id="apptDetails">
+        <!-- Generado dinámicamente -->
+      </div>
+      <button class="close-appt-btn" onclick="document.getElementById('appointmentCard').classList.remove('active')">
+        Entendido ✓
+      </button>
+    </div>
+  </div>
+
+  <!-- Config Modal -->
+  <div class="modal-overlay" id="configModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>⚙️ Configuración del Asistente</h2>
+        <p>Ajusta el cerebro y nombre de tu bot telefónico</p>
+      </div>
+      <div class="modal-body">
+        <label for="apiKeyInput">API Key de Gemini</label>
+        <input
+          type="password"
+          id="apiKeyInput"
+          placeholder="AIza..."
+          class="api-input"
+        />
+        <p class="api-hint">
+          Consíguela gratis en <a href="https://aistudio.google.com/app/apikey" target="_blank">Google AI Studio</a>
+        </p>
+        <label for="businessNameInput">Nombre de tu Negocio / Marca</label>
+        <input
+          type="text"
+          id="businessNameInput"
+          placeholder="Ej: Salón Luna, Barbería Boss..."
+          class="api-input"
+        />
+        <label for="businessDescInput">Descripción de tu negocio (Instrucciones del bot)</label>
+        <textarea
+          id="businessDescInput"
+          placeholder="Ej: Ofrecemos cortes de cabello y tintes. Citas disponibles de 9am a 7pm de lunes a sábado..."
+          class="api-input"
+          rows="4"
+        ></textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="save-btn" id="saveConfigBtn">Activar Asistente de Voz ✓</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
