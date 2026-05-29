@@ -5,11 +5,11 @@
 
 // ─── ESTADO GLOBAL ───────────────────────────
 const state = {
-  apiKey: localStorage.getItem('gemini_api_key') || '',
-  businessName: localStorage.getItem('business_name') || 'Mi Negocio',
-  businessDesc: localStorage.getItem('business_desc') || '',
+  apiKey: localStorage.getItem('gemini_api_key') || 'AIzaSyDxR5T2FPw32-NhhcwRwXpANJDV1nYq2E0',
+  businessName: localStorage.getItem('business_name') || 'Luna Spa y Belleza',
+  businessDesc: localStorage.getItem('business_desc') || 'Ofrecemos masajes relajantes, limpieza facial y cortes de cabello premium. Atendemos de lunes a sábado de 9:00 AM a 7:00 PM.',
   detectedModel: localStorage.getItem('detected_model') || 'gemini-1.5-flash-latest',
-  preferredVoice: localStorage.getItem('preferred_voice') || '',
+  preferredVoice: localStorage.getItem('preferred_voice') || 'cloud-latin-female',
   messages: [],
   isLoading: false,
   isListening: false,
@@ -141,12 +141,24 @@ function setupEventListeners() {
       return;
     }
 
+    // ✦ DESBLOQUEAR EL REPRODUCTOR DE AUDIO:
+    // Reproducimos un audio en blanco súper corto para ganarnos el permiso del navegador (autoplay bypass)
+    const player = document.getElementById('voicePlayer');
+    if (player) {
+      player.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
+      player.play().catch(e => console.warn("Intento de desbloqueo de audio:", e.message));
+    }
+
     if (!state.isCallActive) {
       startCall();
     } else {
       // Si la llamada está activa y tocamos la esfera mientras habla, la interrumpimos para volver a hablar nosotros
       if (window.speechSynthesis.speaking) {
         window.speechSynthesis.cancel();
+      }
+      if (state.currentAudio) {
+        state.currentAudio.pause();
+        state.currentAudio = null;
       }
       startListening();
     }
@@ -537,26 +549,37 @@ function speakTextGoogleTTS(text, callback) {
     // URL de Google Translate TTS en español latinoamericano (es-419)
     const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=es-419&client=tw-ob&q=${encodeURIComponent(textToSpeak)}`;
     
-    const audio = new Audio(url);
-    state.currentAudio = audio;
-    
-    audio.onended = () => {
-      playNextChunk();
-    };
-
-    audio.onerror = (e) => {
-      console.warn("Fallo reproducción Google TTS, usando local fallback:", e);
-      speakTextWebSpeech(textToSpeak, () => {
+    // Usar el reproductor desbloqueado en lugar de crear un objeto Audio nuevo en cada llamada
+    const audio = document.getElementById('voicePlayer');
+    if (audio) {
+      audio.src = url;
+      state.currentAudio = audio;
+      
+      audio.onended = () => {
         playNextChunk();
-      });
-    };
+      };
 
-    audio.play().catch(err => {
-      console.warn("Autoplay bloqueado o error en Google TTS, usando local fallback:", err);
-      speakTextWebSpeech(textToSpeak, () => {
-        playNextChunk();
+      audio.onerror = (e) => {
+        console.warn("Fallo reproducción Google TTS en reproductor, usando local fallback:", e);
+        speakTextWebSpeech(textToSpeak, () => {
+          playNextChunk();
+        });
+      };
+
+      audio.play().catch(err => {
+        console.warn("Fallo play() en reproductor, usando local fallback:", err);
+        speakTextWebSpeech(textToSpeak, () => {
+          playNextChunk();
+        });
       });
-    });
+    } else {
+      // Fallback si por alguna razón no se encuentra el tag audio
+      const backupAudio = new Audio(url);
+      state.currentAudio = backupAudio;
+      backupAudio.onended = () => playNextChunk();
+      backupAudio.onerror = () => speakTextWebSpeech(textToSpeak, () => playNextChunk());
+      backupAudio.play().catch(() => speakTextWebSpeech(textToSpeak, () => playNextChunk()));
+    }
   }
 
   setOrbState('speaking');
