@@ -338,53 +338,85 @@ async function processVoiceInput(text) {
   
   state.messages.push({ role: 'user', parts: [{ text: text }] });
 
-  // Intentar con gemini-1.5-flash en el endpoint estable v1 (máxima compatibilidad)
-  // y gemini-2.0-flash en v1beta como secundario
   const primaryModel = state.detectedModel || 'gemini-1.5-flash';
-  const attempts = [
-    {
-      url: `https://generativelanguage.googleapis.com/v1beta/models/${primaryModel}:generateContent?key=${state.apiKey}`,
-      model: `${primaryModel} (v1beta)`
-    },
-    {
-      url: `https://generativelanguage.googleapis.com/v1/models/${primaryModel}:generateContent?key=${state.apiKey}`,
-      model: `${primaryModel} (v1)`
-    }
-  ];
   let success = false;
   let botText = '';
   let lastError = null;
 
-  for (const attempt of attempts) {
-    try {
-      const response = await fetch(
-        attempt.url,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: state.messages,
-            generationConfig: {
-              temperature: 0.6,
-              maxOutputTokens: 350,
-              topP: 0.8,
-            }
-          }),
-        }
-      );
+  // ✦ INTENTO 1: Servidor Seguro de Cloudflare (Pages Function)
+  // De esta forma la clave API nunca se expone públicamente si está en internet
+  try {
+    const response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: state.messages,
+        model: primaryModel
+      })
+    });
 
-      if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error?.message || `Error con ${attempt.model}`);
-      }
-
+    if (response.ok) {
       const data = await response.json();
       botText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      success = true;
-      break;
-    } catch (err) {
-      console.warn(`Fallo con ${attempt.model}:`, err.message);
-      lastError = err;
+      if (botText) {
+        success = true;
+        console.log("¡Respuesta obtenida con éxito a través del servidor seguro!");
+      }
+    } else if (response.status !== 404) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || `Error del servidor seguro (${response.status})`);
+    } else {
+      console.log("Servidor seguro no disponible localmente (404), usando fallback directo en navegador...");
+    }
+  } catch (err) {
+    console.warn("Fallo el servidor seguro (intentando conexión directa):", err.message);
+    lastError = err;
+  }
+
+  // ✦ INTENTO 2: Conexión Directa desde Navegador (Fallback si el servidor no está o falla)
+  if (!success) {
+    const attempts = [
+      {
+        url: `https://generativelanguage.googleapis.com/v1beta/models/${primaryModel}:generateContent?key=${state.apiKey}`,
+        model: `${primaryModel} (v1beta directo)`
+      },
+      {
+        url: `https://generativelanguage.googleapis.com/v1/models/${primaryModel}:generateContent?key=${state.apiKey}`,
+        model: `${primaryModel} (v1 directo)`
+      }
+    ];
+
+    for (const attempt of attempts) {
+      try {
+        const response = await fetch(
+          attempt.url,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: state.messages,
+              generationConfig: {
+                temperature: 0.6,
+                maxOutputTokens: 350,
+                topP: 0.8,
+              }
+            }),
+          }
+        );
+
+        if (!response.ok) {
+          const err = await response.json();
+          throw new Error(err.error?.message || `Error con ${attempt.model}`);
+        }
+
+        const data = await response.json();
+        botText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        success = true;
+        break;
+      } catch (err) {
+        console.warn(`Fallo con ${attempt.model}:`, err.message);
+        lastError = err;
+      }
     }
   }
 
