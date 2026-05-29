@@ -16,6 +16,7 @@ const state = {
   recognition: null,
   isCallActive: false,
   currentUtterance: null,
+  currentAudio: null,
   appointments: JSON.parse(localStorage.getItem('appointments') || '[]'),
 };
 
@@ -210,6 +211,10 @@ function endCall() {
   if (window.speechSynthesis) {
     window.speechSynthesis.cancel();
   }
+  if (state.currentAudio) {
+    state.currentAudio.pause();
+    state.currentAudio = null;
+  }
   
   setOrbState('idle');
   subtitleText.textContent = '"Llamada finalizada"';
@@ -268,9 +273,10 @@ function setupSpeechRecognition() {
       if (text && text !== '...' && text !== 'Iniciando conversación...') {
         processVoiceInput(text);
       } else {
-        // Si no se escuchó nada útil, re-iniciamos escucha en 1 segundo
+        // Si no se escuchó nada útil, re-iniciamos escucha en 1.5 segundos
         setTimeout(() => {
-          if (state.isCallActive && !window.speechSynthesis.speaking && !state.isLoading) {
+          const isSpeaking = window.speechSynthesis.speaking || (state.currentAudio && !state.currentAudio.paused);
+          if (state.isCallActive && !isSpeaking && !state.isLoading) {
             startListening();
           }
         }, 1500);
@@ -289,6 +295,10 @@ function startListening() {
   
   if (window.speechSynthesis) {
     window.speechSynthesis.cancel(); // Silenciar si Luna estaba hablando
+  }
+  if (state.currentAudio) {
+    state.currentAudio.pause();
+    state.currentAudio = null;
   }
 
   setOrbState('listening');
@@ -459,15 +469,113 @@ function showAppointmentSlideup(appt) {
 
 // ─── MOTOR DE VOZ SÍNTESIS (TTS) ─────────────
 function speakText(text, callback) {
+  // Prioridad absoluta: Si el usuario seleccionó la voz de la nube (o no hay voz preferida aún)
+  if (state.preferredVoice === 'cloud-latin-female' || !state.preferredVoice) {
+    speakTextGoogleTTS(text, callback);
+  } else {
+    speakTextWebSpeech(text, callback);
+  }
+}
+
+// Voz Ultra-Natural Latinoamericana (Google Cloud Translate TTS)
+function speakTextGoogleTTS(text, callback) {
+  // Limpiar caracteres extraños
+  const cleanText = text
+    .replace(/[*#_\[\]]/g, '')
+    .replace(/[\u{1F300}-\u{1FFFF}]/gu, '')
+    .trim();
+
+  if (!cleanText) {
+    if (callback) callback();
+    return;
+  }
+
+  // Silenciar cualquier voz previa
+  if (window.speechSynthesis) {
+    window.speechSynthesis.cancel();
+  }
+  if (state.currentAudio) {
+    state.currentAudio.pause();
+  }
+
+  // Dividir el texto en bloques de máximo 180 caracteres (por límite de Google TTS)
+  const sentences = cleanText.match(/[^.!?]+[.!?]*/g) || [cleanText];
+  const chunks = [];
+  
+  sentences.forEach(s => {
+    let part = s.trim();
+    while (part.length > 0) {
+      if (part.length <= 180) {
+        chunks.push(part);
+        part = "";
+      } else {
+        let splitIdx = part.lastIndexOf(' ', 180);
+        if (splitIdx === -1) splitIdx = 180;
+        chunks.push(part.substring(0, splitIdx));
+        part = part.substring(splitIdx).trim();
+      }
+    }
+  });
+
+  let currentChunk = 0;
+  
+  function playNextChunk() {
+    if (!state.isCallActive) {
+      setOrbState('idle');
+      return;
+    }
+
+    if (currentChunk >= chunks.length) {
+      setOrbState('idle');
+      if (callback) callback();
+      return;
+    }
+
+    const textToSpeak = chunks[currentChunk];
+    currentChunk++;
+
+    // URL de Google Translate TTS en español latinoamericano (es-419)
+    const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=es-419&client=tw-ob&q=${encodeURIComponent(textToSpeak)}`;
+    
+    const audio = new Audio(url);
+    state.currentAudio = audio;
+    
+    audio.onended = () => {
+      playNextChunk();
+    };
+
+    audio.onerror = (e) => {
+      console.warn("Fallo reproducción Google TTS, usando local fallback:", e);
+      speakTextWebSpeech(textToSpeak, () => {
+        playNextChunk();
+      });
+    };
+
+    audio.play().catch(err => {
+      console.warn("Autoplay bloqueado o error en Google TTS, usando local fallback:", err);
+      speakTextWebSpeech(textToSpeak, () => {
+        playNextChunk();
+      });
+    });
+  }
+
+  setOrbState('speaking');
+  playNextChunk();
+}
+
+// Voz local del navegador (Web Speech API)
+function speakTextWebSpeech(text, callback) {
   if (!window.speechSynthesis) {
     if (callback) callback();
     return;
   }
 
-  // Detener cualquier voz previa
   window.speechSynthesis.cancel();
+  if (state.currentAudio) {
+    state.currentAudio.pause();
+    state.currentAudio = null;
+  }
 
-  // Limpiar caracteres extraños
   const cleanText = text
     .replace(/[*#_\[\]]/g, '')
     .replace(/[\u{1F300}-\u{1FFFF}]/gu, '')
@@ -475,15 +583,13 @@ function speakText(text, callback) {
 
   const utter = new SpeechSynthesisUtterance(cleanText);
   utter.lang = 'es-MX';
-  utter.rate = 0.98;  // Velocidad ligeramente más lenta para que suene menos robótico y más natural
-  utter.pitch = 1.02; // Tono ligeramente más cálido y femenino
+  utter.rate = 0.98;
+  utter.pitch = 1.02;
   utter.volume = 1.0;
 
-  // Obtener todas las voces en el dispositivo
   const voices = window.speechSynthesis.getVoices();
   const esVoices = voices.filter(v => v.lang.startsWith('es'));
 
-  // Prioridad: Usar la seleccionada por el usuario, si no, buscar la mejor premium
   let premiumVoice = esVoices.find(v => v.name === state.preferredVoice);
 
   if (!premiumVoice) {
@@ -497,7 +603,7 @@ function speakText(text, callback) {
 
   if (premiumVoice) {
     utter.voice = premiumVoice;
-    console.log("Voz premium seleccionada:", premiumVoice.name, premiumVoice.localService ? "[Local]" : "[Online/Natural]");
+    console.log("Voz del sistema seleccionada:", premiumVoice.name);
   }
 
   utter.onend = () => {
@@ -508,7 +614,7 @@ function speakText(text, callback) {
   };
 
   utter.onerror = (e) => {
-    console.error('Speech synthesis error:', e);
+    console.error('Speech synthesis local error:', e);
     setOrbState('idle');
     if (state.isCallActive && callback) {
       callback();
@@ -523,9 +629,13 @@ function speakText(text, callback) {
 
 // Cargar y listar todas las voces del dispositivo en el selector
 function populateVoices() {
-  if (!window.speechSynthesis || !voiceSelect) return;
+  if (!voiceSelect) return;
 
-  const voices = window.speechSynthesis.getVoices();
+  // Cargar lista de voces del navegador
+  let voices = [];
+  if (window.speechSynthesis) {
+    voices = window.speechSynthesis.getVoices();
+  }
   const esVoices = voices.filter(v => v.lang.startsWith('es'));
 
   // Guardar la selección actual
@@ -534,15 +644,17 @@ function populateVoices() {
   // Limpiar el selector
   voiceSelect.innerHTML = '';
 
-  if (esVoices.length === 0) {
-    const opt = document.createElement('option');
-    opt.value = '';
-    opt.textContent = 'Sin voces en español detectadas';
-    voiceSelect.appendChild(opt);
-    return;
+  // ✦ Prioridad 1: Agregar siempre la voz ultra-natural en la nube
+  const cloudOption = document.createElement('option');
+  cloudOption.value = 'cloud-latin-female';
+  cloudOption.textContent = 'Luna Premium (Voz Latinoamericana Ultra-Natural) ✦ [Recomendado]';
+  if (currentSelection === 'cloud-latin-female' || !currentSelection) {
+    cloudOption.selected = true;
+    state.preferredVoice = 'cloud-latin-female';
   }
+  voiceSelect.appendChild(cloudOption);
 
-  // Ordenar voces premium online al inicio
+  // Ordenar voces premium locales online al inicio
   esVoices.sort((a, b) => {
     const aPremium = !a.localService ? 1 : 0;
     const bPremium = !b.localService ? 1 : 0;
@@ -555,19 +667,12 @@ function populateVoices() {
     const typeLabel = voice.localService ? '[Básica Offline]' : '[Premium Natural Online]';
     option.textContent = `${voice.name} (${voice.lang}) ${typeLabel}`;
     
-    // Autoseleccionar la preferida anterior
     if (voice.name === currentSelection) {
       option.selected = true;
     }
     
     voiceSelect.appendChild(option);
   });
-
-  // Si no había selección previa, autoseleccionar la primera (que es premium)
-  if (!voiceSelect.value && esVoices.length > 0) {
-    voiceSelect.selectedIndex = 0;
-    state.preferredVoice = voiceSelect.value;
-  }
 }
 
 // Autodetectar dinámicamente los modelos activos del usuario para evitar errores
